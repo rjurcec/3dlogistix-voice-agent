@@ -1,3 +1,6 @@
 flask
 twilio
 openai
+requests
+gspread
+google-auth
