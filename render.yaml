@@ -2,9 +2,9 @@ services:
   - type: web
     name: 3dlogistix-voice-agent
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
-    plan: free
     staticPublishPath: static
     envVars:
       - key: OPENAI_API_KEY
@@ -19,3 +19,10 @@ services:
         sync: false
       - key: TWILIO_PHONE_NUMBER
         sync: false
+      - key: GOOGLE_CREDS_PATH
+        value: /etc/secrets/google-creds.json
+
+files:
+  - name: google-creds.json
+    path: /etc/secrets/google-creds.json
+
