@@ -4,7 +4,11 @@ from urllib.parse import urlencode
 from twilio.rest import Client
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime  # ✅ Added to support timestamp logging
+from datetime import datetime
+from dotenv import load_dotenv
+
+# ✅ Load environment variables from .env file (local testing)
+load_dotenv()
 
 # Twilio credentials from environment
 account_sid = os.getenv("AC9386bfd4dcbc521d4fcd54b68c81d940")
