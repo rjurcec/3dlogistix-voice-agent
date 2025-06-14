@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Twilio credentials from environment
-account_sid = os.getenv("AC9386bfd4dcbc521d4fcd54b68c81d940")
-auth_token = os.getenv("9f58bd27e9146c1c8dd5d793839cd24e")
+account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
 client = Client(account_sid, auth_token)
 
@@ -31,13 +31,13 @@ def log_to_sheet(name, phone, pain):
 def build_prompt(name, linkedin, pain):
     """Builds the AI prompt (currently unused; logic moved to Flask endpoint)."""
     return (
-        f"You are Alex, a friendly and knowledgeable AI sales assistant from 3DLogistiX, calling {name}, "
+        f"You are Alex, a friendly and knowledgeable AI sales assistant from 3DLogistix, calling {name}, "
         f"a warehouse manager. You've seen their LinkedIn profile at {linkedin} and know their key pain point is: '{pain}'. "
-        f"Start by addressing their pain point and showing empathy. "
-        f"Then explain how companies like Wilde Brands solved similar challenges using 3DLogistiX. "
+        f"Start by validating their potential pain point. Get them to speak about their pain points and show empathy. "
+        f"Then explain how companies like Wilde Brands solved similar challenges using the 3DLogistix WMS solution. "
         f"Wilde Brands connects Shopify, Xero, and Starshipit through our platform to automate order flow, stock visibility, "
-        f"and dispatch coordination — saving time and reducing human errors. "
-        f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, DEAR, and Unleashed."
+        f"and managing their warehouse through the 3D view  — saving time, seeing where everyone is in the warehouse and reducing human errors. "
+        f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, MOYB, and Magento."
     )
 
 def call_contact(contact):
