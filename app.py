@@ -1,122 +1,130 @@
 import os
 import uuid
-from flask import Flask, request, Response, jsonify, send_from_directory
-from dotenv import load_dotenv
 import requests
-import gspread
-from google.oauth2 import service_account
+import traceback
+import threading
+from flask import Flask, request, Response, send_from_directory
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__, static_folder="static")
 STATIC_FOLDER = app.static_folder
 
-# Config
-ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
-VOICE_ID = os.getenv("VOICE_ID")
+# ENV VARS
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_CREDS_PATH = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
-GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
+GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY")
 
-# Initialize OpenAI
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# OpenAI client
+openai = OpenAI(api_key=OPENAI_API_KEY)
 
-# Google Sheets Setup
-worksheet = None
+# Google Sheets setup
+sheet = None
 try:
-    if GOOGLE_CREDS_PATH and GOOGLE_SHEET_NAME:
-        creds = service_account.Credentials.from_service_account_file(
-            GOOGLE_CREDS_PATH,
-            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        )
-        gc = gspread.authorize(creds)
-        worksheet = gc.open(GOOGLE_SHEET_NAME).sheet1
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name('gspread-service-account.json', scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(GOOGLE_SHEET_KEY).sheet1
 except Exception as e:
-    print(f"[⚠️ Google Sheets Init Error]: {e}")
+    print(f"[⚠️ Google Sheets Init Error] {e}")
 
-@app.route("/voice", methods=["GET", "POST"])
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    return send_from_directory(STATIC_FOLDER, filename)
+
+@app.route("/voice", methods=["POST"])
 def voice():
     try:
         name = request.values.get("name", "there")
         linkedin = request.values.get("linkedin", "")
         pain = request.values.get("pain", "some operational challenges")
 
-        if not name or not pain:
-            return jsonify({"error": "Missing parameters"}), 400
-
-        # Pull recent examples if available
-        examples = ""
-        if worksheet:
-            recent = worksheet.get_all_values()[-20:]
-            examples = "\n\n".join(
-                f"{row[0]} said: '{row[4]}'"
-                for row in recent if len(row) > 4 and row[4].strip()
-            )
-
-        # Build prompt
-        prompt = (
-            f"Based on these recent customer conversations:\n{examples}\n\n"
-            f"You are Alex, a friendly AI sales assistant from 3DLogistiX, calling {name} "
-            f"(LinkedIn: {linkedin}). Their pain point is: '{pain}'.\n"
-            f"Validate the pain, show empathy, and explain how Wilde Brands solved this via our WMS — "
-            f"3D warehouse view, automation, integrations with Shopify, Xero, Starshipit, etc.\n"
-            f"Offer a demo and mention NetSuite, MYOB, and Magento compatibility."
-        )
-
-        # Generate script
-        script = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        ).choices[0].message.content.strip()
-
-        # Generate audio
         audio_filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(STATIC_FOLDER, audio_filename)
+        placeholder = "sample.mp3"
+        audio_url = f"https://{request.host}/static/{audio_filename}"
 
+        # Immediately return TwiML with placeholder audio
+        twiml = VoiceResponse()
+        twiml.play(f"https://{request.host}/static/{placeholder}")
+
+        # Spawn background thread for processing
+        thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
+        thread.start()
+
+        return Response(str(twiml), mimetype='text/xml')
+
+    except Exception as e:
+        print(f"[❌ Error]: {traceback.format_exc()}")
+        return {"error": "Internal server error"}, 500
+
+def generate_audio(name, linkedin, pain, audio_path, audio_filename):
+    try:
+        # Pull examples
+        examples = ""
+        if sheet:
+            recent = sheet.get_all_values()[-10:]
+            examples = "\n\n".join(f"{row[0]} said: '{row[4]}'" for row in recent if len(row) > 4 and row[4].strip())
+
+        prompt = f"""
+You are an outbound sales agent from 3DLogistiX, calling {name} who left their details on our site. 
+They are struggling with: "{pain}". LinkedIn: {linkedin}
+
+Be helpful and informative. Mention real-time 3D warehouse visualisation, automation, Shopify/Xero/MYOB/Magento integrations, and how Wilde Brands used it.
+
+Recent examples:\n\n{examples}
+"""
+
+        gpt_response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful sales rep."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+
+        script = gpt_response.choices[0].message.content.strip()
+
+        # Generate audio
         tts_response = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
             headers={
-                "xi-api-key": ELEVEN_API_KEY,
+                "xi-api-key": ELEVENLABS_API_KEY,
                 "Content-Type": "application/json"
             },
             json={
                 "text": script,
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75
+                }
             },
             stream=True
         )
 
-        if tts_response.status_code == 200:
+        if tts_response.ok:
             with open(audio_path, "wb") as f:
                 for chunk in tts_response.iter_content(chunk_size=4096):
                     f.write(chunk)
         else:
             print(f"[⚠️ TTS Error]: {tts_response.text}")
-            audio_filename = "sample.mp3"
-            audio_path = os.path.join(STATIC_FOLDER, audio_filename)
-            if not os.path.exists(audio_path):
-                return jsonify({"error": "sample.mp3 missing for fallback"}), 500
 
-        # Twilio voice response
-        response = VoiceResponse()
-        response.play(f"https://threedlogistix-voice-agent.onrender.com/static/{audio_filename}")
-        return Response(str(response), mimetype='text/xml')
+        if sheet:
+            sheet.append_row([name, linkedin, pain, script, script])
 
     except Exception as e:
-        print(f"[❌ Error]: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"[❌ Background Gen Error]: {traceback.format_exc()}")
 
-@app.route("/static/<path:filename>")
-def serve_static(filename):
-    return send_from_directory(STATIC_FOLDER, filename)
-
-if __name__ == '__main__':
-    app.run(debug=False, port=10000, host='0.0.0.0')
-
-
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 
 
