@@ -38,7 +38,7 @@ except Exception as e:
 def serve_static(filename):
     return send_from_directory(STATIC_FOLDER, filename)
 
-@app.route("/voice", methods=["POST"])
+@app.route("/voice", methods=["GET", "POST"])
 def voice():
     try:
         name = request.values.get("name", "there")
@@ -50,11 +50,11 @@ def voice():
         placeholder = "sample.mp3"
         audio_url = f"https://{request.host}/static/{audio_filename}"
 
-        # Immediately return TwiML with placeholder audio
+        # Immediately return TwiML with placeholder
         twiml = VoiceResponse()
         twiml.play(f"https://{request.host}/static/{placeholder}")
 
-        # Spawn background thread for processing
+        # Background audio generation
         thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
         thread.start()
 
@@ -62,7 +62,7 @@ def voice():
 
     except Exception as e:
         print(f"[❌ Error]: {traceback.format_exc()}")
-        return {"error": "Internal server error"}, 500
+        return Response("<Response><Say>Something went wrong.</Say></Response>", mimetype='text/xml')
 
 def generate_audio(name, linkedin, pain, audio_path, audio_filename):
     try:
@@ -73,7 +73,7 @@ def generate_audio(name, linkedin, pain, audio_path, audio_filename):
             examples = "\n\n".join(f"{row[0]} said: '{row[4]}'" for row in recent if len(row) > 4 and row[4].strip())
 
         prompt = f"""
-You are an outbound sales agent from 3DLogistiX, calling {name} who left their details on our site. 
+You are an outbound sales agent from 3DLogistiX, calling {name} who does not know who we are. 
 They are struggling with: "{pain}". LinkedIn: {linkedin}
 
 Be helpful and informative. Mention real-time 3D warehouse visualisation, automation, Shopify/Xero/MYOB/Magento integrations, and how Wilde Brands used it.
@@ -113,6 +113,7 @@ Recent examples:\n\n{examples}
             with open(audio_path, "wb") as f:
                 for chunk in tts_response.iter_content(chunk_size=4096):
                     f.write(chunk)
+            print(f"[✅ Audio Generated] Saved to {audio_filename}")
         else:
             print(f"[⚠️ TTS Error]: {tts_response.text}")
 
