@@ -76,13 +76,23 @@ def voice_final():
         file_path = os.path.join(STATIC_FOLDER, filename)
 
         twiml = VoiceResponse()
-        if os.path.exists(file_path):
-            twiml.play(url_for("static", filename=filename, _external=True))
-        else:
-            # Still not ready — optionally retry
-            twiml.say("We're still preparing your message, please hold.")
+
+        # Wait up to 10 seconds for the file to appear
+        timeout = 10
+        interval = 1
+        waited = 0
+
+        while waited < timeout:
+            if os.path.exists(file_path):
+                twiml.play(url_for("static", filename=filename, _external=True))
+                break
+            time.sleep(interval)
+            waited += interval
+
+        if waited >= timeout:
+            twiml.say("We’re sorry, your custom message is still being generated.")
             twiml.pause(length=2)
-            twiml.redirect(request.url)
+            twiml.say("Please try again later.")
 
         return Response(str(twiml), mimetype="text/xml")
 
