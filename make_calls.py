@@ -3,7 +3,7 @@ import os
 from urllib.parse import urlencode
 from twilio.rest import Client
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -25,7 +25,7 @@ sheet_name = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 try:
-    creds = Credentials.from_service_account_file(creds_path, scopes=scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
     gc = gspread.authorize(creds)
     sheet = gc.open(sheet_name).sheet1
 except Exception as e:

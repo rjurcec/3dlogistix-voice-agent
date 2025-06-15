@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 import requests
 import traceback
 import threading
@@ -47,29 +48,50 @@ def voice():
 
         audio_filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(STATIC_FOLDER, audio_filename)
-        audio_url = url_for('static', filename=audio_filename, _external=True)
 
-        # Replace 'sample.mp3' with your real intro file
-        placeholder_filename = "preparing.mp3"
-        placeholder_url = url_for('static', filename=placeholder_filename, _external=True)
+        # Save name and audio filename to session via query string for reuse
+        query = f"name={name}&linkedin={linkedin}&pain={pain}&file={audio_filename}"
+        final_audio_url = f"{request.url_root}voice-final?{query}"
 
-        # Return TwiML immediately with placeholder
-        twiml = VoiceResponse()
-        twiml.play(placeholder_url)
-
-        # Start background processing
+        # Kick off background audio generation
         thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
         thread.start()
 
-        return Response(str(twiml), mimetype='text/xml')
+        # Initial response plays placeholder and redirects to final audio check
+        twiml = VoiceResponse()
+        twiml.play(url_for("static", filename="preparing.mp3", _external=True))
+        twiml.pause(length=2)
+        twiml.redirect(final_audio_url)
 
-    except Exception as e:
+        return Response(str(twiml), mimetype="text/xml")
+
+    except Exception:
         print(f"[❌ Error]: {traceback.format_exc()}")
-        return Response("<Response><Say>Something went wrong.</Say></Response>", mimetype='text/xml')
+        return Response("<Response><Say>Something went wrong.</Say></Response>", mimetype="text/xml")
+
+@app.route("/voice-final", methods=["GET", "POST"])
+def voice_final():
+    try:
+        filename = request.args.get("file")
+        file_path = os.path.join(STATIC_FOLDER, filename)
+
+        twiml = VoiceResponse()
+        if os.path.exists(file_path):
+            twiml.play(url_for("static", filename=filename, _external=True))
+        else:
+            # Still not ready — optionally retry
+            twiml.say("We're still preparing your message, please hold.")
+            twiml.pause(length=2)
+            twiml.redirect(request.url)
+
+        return Response(str(twiml), mimetype="text/xml")
+
+    except Exception:
+        print(f"[❌ Error]: {traceback.format_exc()}")
+        return Response("<Response><Say>Something went wrong.</Say></Response>", mimetype="text/xml")
 
 def generate_audio(name, linkedin, pain, audio_path, audio_filename):
     try:
-        # Pull examples
         examples = ""
         if sheet:
             recent = sheet.get_all_values()[-10:]
@@ -95,7 +117,7 @@ Recent examples:\n\n{examples}
 
         script = gpt_response.choices[0].message.content.strip()
 
-        # Generate audio
+        # Generate audio via ElevenLabs
         tts_response = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
             headers={
@@ -123,7 +145,7 @@ Recent examples:\n\n{examples}
         if sheet:
             sheet.append_row([name, linkedin, pain, script, script])
 
-    except Exception as e:
+    except Exception:
         print(f"[❌ Background Gen Error]: {traceback.format_exc()}")
 
 @app.route("/debug-static")
