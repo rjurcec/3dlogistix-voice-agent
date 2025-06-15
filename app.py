@@ -4,40 +4,38 @@ from dotenv import load_dotenv
 import requests
 import gspread
 from google.oauth2 import service_account
-from openai import OpenAI
 from twilio.twiml.voice_response import VoiceResponse
+from openai import OpenAI
 
-# Load environment variables
+# Load env vars
 load_dotenv()
 
-# Flask app
 app = Flask(__name__)
 
-# Environment variables
+# Load environment variables
 ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
 VOICE_ID = os.getenv("VOICE_ID")
-GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
-GOOGLE_CREDS_PATH = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_CREDS_PATH = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
+GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
 
-# Validate config
-if not all([ELEVEN_API_KEY, VOICE_ID, GOOGLE_CREDS_PATH, OPENAI_API_KEY]):
-    raise EnvironmentError("Missing required environment variables in .env file")
+# Initialize Google Sheets if credentials available
+worksheet = None
+try:
+    if all([GOOGLE_CREDS_PATH, GOOGLE_SHEET_NAME]):
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = service_account.Credentials.from_service_account_file(GOOGLE_CREDS_PATH, scopes=scope)
+        gc = gspread.authorize(creds)
+        worksheet = gc.open(GOOGLE_SHEET_NAME).sheet1
+except Exception as e:
+    print(f"[⚠️ Google Sheets Init Error]: {e}")
 
-# Google Sheets setup
-scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = service_account.Credentials.from_service_account_file(GOOGLE_CREDS_PATH, scopes=scope)
-gc = gspread.authorize(creds)
-worksheet = gc.open(GOOGLE_SHEET_NAME).sheet1
-
-# OpenAI setup
+# Initialize OpenAI
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
 
 @app.route('/')
 def index():
-    return "✅ 3DLogistiX AI voice agent is live."
-
+    return "✅ 3DLogistiX Voice Agent is Running."
 
 @app.route('/voice', methods=['POST'])
 def voice():
@@ -49,31 +47,32 @@ def voice():
         return jsonify({"error": "Missing parameters"}), 400
 
     try:
-        recent_transcripts = worksheet.get_all_values()[-20:]
-        examples = "\n\n".join([
-            f"{row[0]} said: '{row[4]}'"
-            for row in recent_transcripts if len(row) > 4 and row[4].strip()
-        ])
+        # Use recent transcript examples if available
+        examples = ""
+        if worksheet:
+            recent = worksheet.get_all_values()[-20:]
+            examples = "\n\n".join(
+                f"{row[0]} said: '{row[4]}'" for row in recent if len(row) > 4 and row[4].strip()
+            )
 
+        # Build prompt
         prompt = (
             f"Based on these recent customer conversations:\n{examples}\n\n"
-            f"You are Alex, a friendly and knowledgeable AI sales assistant from 3DLogistiX, calling {name}, "
-            f"a warehouse manager. You've seen their LinkedIn profile at {linkedin} and know their key pain point is: '{pain}'. "
-            f"Start by validating their potential pain point. Get them to speak about their pain points and show empathy. "
-            f"Then explain how companies like Wilde Brands solved similar challenges using the 3DLogistiX WMS solution. "
-            f"Wilde Brands connects Shopify, Xero, and Starshipit through our platform to automate order flow, stock visibility, "
-            f"and managing their warehouse through the 3D view — saving time, seeing where everyone is in the warehouse and reducing human errors. "
-            f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, MYOB, and Magento."
+            f"You are Alex, a friendly AI sales assistant from 3DLogistiX, calling {name} "
+            f"(LinkedIn: {linkedin}). Their pain point is: '{pain}'.\n"
+            f"Validate the pain, get them to open up. Show empathy. Share how Wilde Brands solved this via our WMS — "
+            f"3D warehouse view, automation, integrations with Shopify, Xero, Starshipit, etc.\n"
+            f"Close by offering a demo and mention NetSuite, MYOB, and Magento compatibility."
         )
 
-        completion = openai_client.chat.completions.create(
+        response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}]
         )
-        script = completion.choices[0].message.content.strip()
+        script = response.choices[0].message.content.strip()
+        print(f"[🧠 GPT SCRIPT]\n{script}")
 
-        print(f"[GPT SCRIPT]: {script}")
-
+        # Generate TTS audio
         tts_response = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
             headers={
@@ -82,23 +81,28 @@ def voice():
             },
             json={
                 "text": script,
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75
-                }
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
             },
             stream=True
         )
 
         if tts_response.status_code != 200:
-            return jsonify({"error": "TTS generation failed", "details": tts_response.text}), 500
+            return jsonify({"error": "TTS failed", "details": tts_response.text}), 500
 
-        return Response(tts_response.iter_content(chunk_size=4096), content_type="audio/mpeg")
+        # Save generated audio temporarily
+        with open("output.mp3", "wb") as f:
+            for chunk in tts_response.iter_content(chunk_size=4096):
+                f.write(chunk)
+
+        # Serve TwiML with audio
+        twiml = VoiceResponse()
+        twiml.play("https://threedlogistix-voice-agent.onrender.com/static/output.mp3")
+
+        return Response(str(twiml), mimetype='text/xml')
 
     except Exception as e:
-        print(f"[ERROR] {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
+        print(f"[ERROR]: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/twilio/handle-recording', methods=['POST'])
 def handle_recording():
@@ -109,65 +113,60 @@ def handle_recording():
         call_sid = request.form.get("CallSid", "")
         transcript = request.form.get("TranscriptionText", "")
 
-        worksheet.append_row([
-            from_number,
-            to_number,
-            recording_url,
-            call_sid,
-            transcript
-        ])
-        print(f"[INFO] Saved recording & transcript for Call SID: {call_sid}")
+        if worksheet:
+            worksheet.append_row([from_number, to_number, recording_url, call_sid, transcript])
+            print(f"[✅ Transcript Saved] Call SID: {call_sid}")
+        else:
+            print("[⚠️ Worksheet not initialized — skipping logging]")
 
         return Response("<Response></Response>", mimetype='text/xml')
 
     except Exception as e:
-        print(f"[ERROR - Recording fallback] {e}")
+        print(f"[ERROR - Transcription Save]: {e}")
         return Response("<Response></Response>", mimetype='text/xml', status=200)
-
 
 @app.route('/analyze-transcripts')
 def analyze_transcripts():
     try:
+        if not worksheet:
+            return jsonify({"error": "Google Sheet not available."}), 503
+
         rows = worksheet.get_all_values()[-20:]
         transcripts = [row for row in rows if len(row) > 4 and row[4].strip()]
 
         results = []
         for row in transcripts:
-            name = row[0]
-            transcript = row[4]
+            name, transcript = row[0], row[4]
             prompt = (
-                f"Analyze this customer transcript between Alex (AI agent) and {name}:\n\n{transcript}\n\n"
-                "Evaluate:\n"
-                "1. Engagement (low/med/high)\n"
+                f"Analyze this transcript between Alex and {name}:\n\n{transcript}\n\n"
+                "Return JSON with:\n"
+                "1. Engagement level\n"
                 "2. Sales intent score (1–10)\n"
-                "3. Agent tone (positive, neutral, robotic, aggressive)\n"
-                "4. Suggestions for tone/pacing/conversion\n\nReturn as JSON."
+                "3. Agent tone\n"
+                "4. Suggestions to improve"
             )
 
             try:
-                completion = openai_client.chat.completions.create(
+                res = openai_client.chat.completions.create(
                     model="gpt-4",
                     messages=[{"role": "user", "content": prompt}]
                 )
-                analysis = completion.choices[0].message.content.strip()
-                results.append({"name": name, "analysis": analysis})
-            except Exception as gpt_err:
-                results.append({"name": name, "error": str(gpt_err)})
+                results.append({"name": name, "analysis": res.choices[0].message.content.strip()})
+            except Exception as inner_err:
+                results.append({"name": name, "error": str(inner_err)})
 
         return jsonify(results)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# Catch-all for unsupported methods
 @app.errorhandler(405)
 def method_not_allowed(e):
     return jsonify({"error": "Method Not Allowed. Use POST for this endpoint."}), 405
 
-
 if __name__ == '__main__':
-    app.run(debug=False, port=10000, host="0.0.0.0")
+    app.run(debug=False, port=10000, host='0.0.0.0')
+
 
 
 
