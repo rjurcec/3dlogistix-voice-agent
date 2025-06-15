@@ -90,7 +90,10 @@ def call_contact(contact):
         return client.calls.create(
             to=phone,
             from_=twilio_number,
-            url=f"{BASE_WEBHOOK_URL}/voice?{query_params}"
+            url=f"{BASE_WEBHOOK_URL}/voice?{query_params}",
+            status_callback=f"{BASE_WEBHOOK_URL}/call-status",
+            status_callback_event=["initiated", "ringing", "answered", "completed"],
+            status_callback_method="POST"
         )
 
     try:
@@ -116,5 +119,4 @@ def load_contacts_and_call(csv_path="contacts.csv"):
 
 if __name__ == "__main__":
     load_contacts_and_call()
-
 

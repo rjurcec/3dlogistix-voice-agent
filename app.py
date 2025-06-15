@@ -50,7 +50,6 @@ def voice():
         audio_filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(STATIC_FOLDER, audio_filename)
 
-        # ✅ Safely encode query string
         query_params = {
             "name": name,
             "linkedin": linkedin,
@@ -59,11 +58,9 @@ def voice():
         }
         final_audio_url = f"{request.url_root}voice-final?{urlencode(query_params)}"
 
-        # Start async audio generation
         thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
         thread.start()
 
-        # Build TwiML response
         twiml = VoiceResponse()
         twiml.play(url_for("static", filename="preparing.mp3", _external=True))
         twiml.pause(length=2)
@@ -114,12 +111,13 @@ def generate_audio(name, linkedin, pain, audio_path, audio_filename):
 
         prompt = f"""
 You are an outbound sales agent from 3DLogistiX, calling {name} who does not know who we are. 
-They are struggling with: "{pain}". LinkedIn: {linkedin}
+They are struggling with: \"{pain}\". LinkedIn: {linkedin}
 
 Be helpful and informative. Mention real-time 3D warehouse visualisation, automation, Shopify/Xero/MYOB/Magento integrations, and how Wilde Brands used it.
 
 Recent examples:\n\n{examples}
 """
+        print(f"[🧠 GPT Prompt Sent]\n{prompt.strip()}")
 
         gpt_response = openai.chat.completions.create(
             model="gpt-4",
@@ -131,31 +129,37 @@ Recent examples:\n\n{examples}
         )
 
         script = gpt_response.choices[0].message.content.strip()
+        print(f"[✅ GPT-4 Response]\n{script}")
 
-        # Generate audio via ElevenLabs
-        tts_response = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
-            headers={
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json"
-            },
-            json={
-                "text": script,
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75
-                }
-            },
-            stream=True
-        )
+        tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
+        tts_headers = {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json"
+        }
+        tts_payload = {
+            "text": script,
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75
+            }
+        }
+
+        print(f"[🔊 Sending to ElevenLabs] {tts_url}")
+        print(f"[🧪 Saving to path]: {audio_path}")
+
+        tts_response = requests.post(tts_url, headers=tts_headers, json=tts_payload, stream=True)
 
         if tts_response.ok:
+            print(f"[🔊 ElevenLabs TTS Response OK] Writing to: {audio_path}")
             with open(audio_path, "wb") as f:
                 for chunk in tts_response.iter_content(chunk_size=4096):
-                    f.write(chunk)
-            print(f"[✅ Audio Generated] Saved to {audio_filename}")
+                    if chunk:
+                        f.write(chunk)
+            print(f"[✅ Audio Saved] /static/{audio_filename}")
         else:
-            print(f"[⚠️ TTS Error]: {tts_response.text}")
+            print(f"[❌ ElevenLabs TTS Error] Status Code: {tts_response.status_code}")
+            print(f"[❌ ElevenLabs Response]: {tts_response.text}")
+            return
 
         if sheet:
             sheet.append_row([name, linkedin, pain, script, script])
@@ -172,3 +176,5 @@ def debug_static():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+
