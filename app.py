@@ -13,12 +13,16 @@ load_dotenv()
 # Flask app
 app = Flask(__name__)
 
-# Constants
+# Environment variables
 ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
 VOICE_ID = os.getenv("VOICE_ID")
 GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
 GOOGLE_CREDS_PATH = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Validate config
+if not all([ELEVEN_API_KEY, VOICE_ID, GOOGLE_CREDS_PATH, OPENAI_API_KEY]):
+    raise EnvironmentError("Missing required environment variables in .env file")
 
 # Google Sheets setup
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -26,34 +30,29 @@ creds = service_account.Credentials.from_service_account_file(GOOGLE_CREDS_PATH,
 gc = gspread.authorize(creds)
 worksheet = gc.open(GOOGLE_SHEET_NAME).sheet1
 
-# OpenAI client
+# OpenAI setup
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
 
 @app.route('/')
 def index():
-    return "3DLogistiX AI voice agent is live."
+    return "✅ 3DLogistiX AI voice agent is live."
 
-@app.route('/voice', methods=['GET', 'POST'])
+
+@app.route('/voice', methods=['POST'])
 def voice():
-    if request.method == 'GET':
-        name = request.args.get('name')
-        linkedin = request.args.get('linkedin')
-        pain = request.args.get('pain')
-    else:
-        name = request.form.get('name')
-        linkedin = request.form.get('linkedin')
-        pain = request.form.get('pain')
+    name = request.form.get('name')
+    linkedin = request.form.get('linkedin')
+    pain = request.form.get('pain')
 
     if not all([name, linkedin, pain]):
         return jsonify({"error": "Missing parameters"}), 400
-
-    print(f"[INFO] Generating voice script for {name}...")
 
     try:
         recent_transcripts = worksheet.get_all_values()[-20:]
         examples = "\n\n".join([
             f"{row[0]} said: '{row[4]}'"
-            for row in recent_transcripts if len(row) > 4 and row[4].strip() != ""
+            for row in recent_transcripts if len(row) > 4 and row[4].strip()
         ])
 
         prompt = (
@@ -64,7 +63,7 @@ def voice():
             f"Then explain how companies like Wilde Brands solved similar challenges using the 3DLogistiX WMS solution. "
             f"Wilde Brands connects Shopify, Xero, and Starshipit through our platform to automate order flow, stock visibility, "
             f"and managing their warehouse through the 3D view — saving time, seeing where everyone is in the warehouse and reducing human errors. "
-            f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, MOYB, and Magento."
+            f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, MYOB, and Magento."
         )
 
         completion = openai_client.chat.completions.create(
@@ -73,7 +72,7 @@ def voice():
         )
         script = completion.choices[0].message.content.strip()
 
-        print(f"[INFO] GPT Script Generated: {script}")
+        print(f"[GPT SCRIPT]: {script}")
 
         tts_response = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
@@ -100,6 +99,7 @@ def voice():
         print(f"[ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/twilio/handle-recording', methods=['POST'])
 def handle_recording():
     try:
@@ -109,8 +109,6 @@ def handle_recording():
         call_sid = request.form.get("CallSid", "")
         transcript = request.form.get("TranscriptionText", "")
 
-        print(f"[INFO] Recording received for Call SID: {call_sid}")
-
         worksheet.append_row([
             from_number,
             to_number,
@@ -118,31 +116,32 @@ def handle_recording():
             call_sid,
             transcript
         ])
+        print(f"[INFO] Saved recording & transcript for Call SID: {call_sid}")
 
         return Response("<Response></Response>", mimetype='text/xml')
 
     except Exception as e:
-        print(f"[ERROR - Fallback triggered] {e}")
+        print(f"[ERROR - Recording fallback] {e}")
         return Response("<Response></Response>", mimetype='text/xml', status=200)
+
 
 @app.route('/analyze-transcripts')
 def analyze_transcripts():
     try:
         rows = worksheet.get_all_values()[-20:]
-        transcripts = [row for row in rows if len(row) > 4 and row[4].strip() != ""]
+        transcripts = [row for row in rows if len(row) > 4 and row[4].strip()]
 
         results = []
         for row in transcripts:
             name = row[0]
             transcript = row[4]
             prompt = (
-                f"Analyze the following customer conversation transcript between Alex (AI sales agent) and {name}:\n\n"
-                f"{transcript}\n\n"
-                "Evaluate:\n1. Customer engagement level (low, medium, high)\n"
-                "2. Sales intent score (1-10)\n"
-                "3. Agent tone (positive, neutral, robotic, overly aggressive, etc.)\n"
-                "4. Suggestions to improve tone, pacing, or conversion\n\n"
-                "Return your response in JSON format."
+                f"Analyze this customer transcript between Alex (AI agent) and {name}:\n\n{transcript}\n\n"
+                "Evaluate:\n"
+                "1. Engagement (low/med/high)\n"
+                "2. Sales intent score (1–10)\n"
+                "3. Agent tone (positive, neutral, robotic, aggressive)\n"
+                "4. Suggestions for tone/pacing/conversion\n\nReturn as JSON."
             )
 
             try:
@@ -160,8 +159,16 @@ def analyze_transcripts():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# Catch-all for unsupported methods
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({"error": "Method Not Allowed. Use POST for this endpoint."}), 405
+
+
 if __name__ == '__main__':
     app.run(debug=False, port=10000, host="0.0.0.0")
+
 
 
 
