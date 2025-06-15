@@ -4,11 +4,12 @@ import time
 import requests
 import traceback
 import threading
+from urllib.parse import urlencode
 from flask import Flask, request, Response, send_from_directory, url_for, jsonify
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
 import gspread
-from google.oauth2.service_account import Credentials  # ✅ Updated import
+from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,7 +30,7 @@ openai = OpenAI(api_key=OPENAI_API_KEY)
 sheet = None
 try:
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("gspread-service-account.json", scopes=scope)  # ✅ Modern auth
+    creds = Credentials.from_service_account_file("gspread-service-account.json", scopes=scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(GOOGLE_SHEET_KEY).sheet1
 except Exception as e:
@@ -49,15 +50,20 @@ def voice():
         audio_filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(STATIC_FOLDER, audio_filename)
 
-        # Save name and audio filename to session via query string for reuse
-        query = f"name={name}&linkedin={linkedin}&pain={pain}&file={audio_filename}"
-        final_audio_url = f"{request.url_root}voice-final?{query}"
+        # ✅ Safely encode query string
+        query_params = {
+            "name": name,
+            "linkedin": linkedin,
+            "pain": pain,
+            "file": audio_filename
+        }
+        final_audio_url = f"{request.url_root}voice-final?{urlencode(query_params)}"
 
-        # Kick off background audio generation
+        # Start async audio generation
         thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
         thread.start()
 
-        # Initial response plays placeholder and redirects to final audio check
+        # Build TwiML response
         twiml = VoiceResponse()
         twiml.play(url_for("static", filename="preparing.mp3", _external=True))
         twiml.pause(length=2)
@@ -77,7 +83,6 @@ def voice_final():
 
         twiml = VoiceResponse()
 
-        # Wait up to 10 seconds for the file to appear
         timeout = 10
         interval = 1
         waited = 0
