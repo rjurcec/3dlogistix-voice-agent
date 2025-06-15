@@ -8,7 +8,7 @@ from flask import Flask, request, Response, send_from_directory, url_for, jsonif
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials  # ✅ Updated import
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,8 +28,8 @@ openai = OpenAI(api_key=OPENAI_API_KEY)
 # Google Sheets setup
 sheet = None
 try:
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name('gspread-service-account.json', scope)
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_file("gspread-service-account.json", scopes=scope)  # ✅ Modern auth
     client = gspread.authorize(creds)
     sheet = client.open_by_key(GOOGLE_SHEET_KEY).sheet1
 except Exception as e:

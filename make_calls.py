@@ -1,9 +1,10 @@
 import csv
 import os
+import time
 from urllib.parse import urlencode
 from twilio.rest import Client
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -24,13 +25,27 @@ creds_path = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
 sheet_name = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
+sheet = None
 try:
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    creds = Credentials.from_service_account_file(creds_path, scopes=scope)
     gc = gspread.authorize(creds)
     sheet = gc.open(sheet_name).sheet1
 except Exception as e:
     print(f"❌ Failed to connect to Google Sheets: {e}")
-    sheet = None
+
+def retry(func, max_attempts=3, delay=2, backoff=2):
+    """
+    Generic retry function.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func()
+        except Exception as e:
+            print(f"⚠️ Attempt {attempt} failed: {e}")
+            if attempt == max_attempts:
+                raise
+            time.sleep(delay)
+            delay *= backoff
 
 def log_to_sheet(name, phone, pain):
     """
@@ -39,9 +54,13 @@ def log_to_sheet(name, phone, pain):
     if not sheet:
         print(f"⚠️ Skipping log to sheet — sheet not initialized.")
         return
-    timestamp = datetime.now().isoformat()
-    try:
+
+    def do_log():
+        timestamp = datetime.now().isoformat()
         sheet.append_row([name, phone, pain, "Call placed", timestamp])
+
+    try:
+        retry(do_log)
     except Exception as e:
         print(f"❌ Failed to log to sheet for {name}: {e}")
 
@@ -64,12 +83,15 @@ def call_contact(contact):
         "pain": pain
     })
 
-    try:
-        call = client.calls.create(
+    def do_call():
+        return client.calls.create(
             to=phone,
             from_=twilio_number,
             url=f"{BASE_WEBHOOK_URL}/voice?{query_params}"
         )
+
+    try:
+        call = retry(do_call)
         print(f"✅ Call placed to {name} ({phone}) | Call SID: {call.sid}")
         log_to_sheet(name, phone, pain)
     except Exception as e:
