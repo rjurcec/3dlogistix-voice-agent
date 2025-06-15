@@ -3,7 +3,7 @@ import uuid
 import requests
 import traceback
 import threading
-from flask import Flask, request, Response, send_from_directory, url_for
+from flask import Flask, request, Response, send_from_directory, url_for, jsonify
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
 import gspread
@@ -126,20 +126,12 @@ Recent examples:\n\n{examples}
     except Exception as e:
         print(f"[❌ Background Gen Error]: {traceback.format_exc()}")
 
+@app.route("/debug-static")
+def debug_static():
+    static_path = os.path.join(app.static_folder)
+    files = os.listdir(static_path)
+    return jsonify({"static_path": static_path, "files": files})
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
