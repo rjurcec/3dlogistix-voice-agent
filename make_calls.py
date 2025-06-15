@@ -7,6 +7,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from dotenv import load_dotenv
+import traceback
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,9 +30,11 @@ sheet = None
 try:
     creds = Credentials.from_service_account_file(creds_path, scopes=scope)
     gc = gspread.authorize(creds)
-    sheet = gc.open(sheet_name).sheet1
+    spreadsheet = gc.open(sheet_name)
+    sheet = spreadsheet.sheet1
+    print(f"✅ Connected to Google Sheet: {sheet_name}")
 except Exception as e:
-    print(f"❌ Failed to connect to Google Sheets: {e}")
+    print(f"❌ Failed to connect to Google Sheets:\n{traceback.format_exc()}")
 
 def retry(func, max_attempts=3, delay=2, backoff=2):
     """
@@ -52,7 +55,7 @@ def log_to_sheet(name, phone, pain):
     Logs the outbound call attempt to Google Sheets.
     """
     if not sheet:
-        print(f"⚠️ Skipping log to sheet — sheet not initialized.")
+        print("⚠️ Skipping log to sheet — sheet not initialized.")
         return
 
     def do_log():
