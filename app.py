@@ -3,7 +3,7 @@ import uuid
 import requests
 import traceback
 import threading
-from flask import Flask, request, Response, send_from_directory
+from flask import Flask, request, Response, send_from_directory, url_for
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
 import gspread
@@ -47,14 +47,17 @@ def voice():
 
         audio_filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(STATIC_FOLDER, audio_filename)
-        placeholder = "sample.mp3"
-        audio_url = f"https://{request.host}/static/{audio_filename}"
+        audio_url = url_for('static', filename=audio_filename, _external=True)
 
-        # Immediately return TwiML with placeholder
+        # Replace 'sample.mp3' with your real intro file
+        placeholder_filename = "preparing.mp3"
+        placeholder_url = url_for('static', filename=placeholder_filename, _external=True)
+
+        # Return TwiML immediately with placeholder
         twiml = VoiceResponse()
-        twiml.play(f"https://{request.host}/static/{placeholder}")
+        twiml.play(placeholder_url)
 
-        # Background audio generation
+        # Start background processing
         thread = threading.Thread(target=generate_audio, args=(name, linkedin, pain, audio_path, audio_filename))
         thread.start()
 
@@ -126,7 +129,6 @@ Recent examples:\n\n{examples}
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 
 
 
