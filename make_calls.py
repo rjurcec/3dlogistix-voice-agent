@@ -4,46 +4,61 @@ from urllib.parse import urlencode
 from twilio.rest import Client
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime  # ✅ Added to support timestamp logging
+from datetime import datetime
+from dotenv import load_dotenv
 
-# Twilio credentials from environment
-account_sid = os.getenv("AC9386bfd4dcbc521d4fcd54b68c81d940")
-auth_token = os.getenv("9f58bd27e9146c1c8dd5d793839cd24e")
+# Load environment variables from .env file
+load_dotenv()
+
+# Twilio setup
+account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
 client = Client(account_sid, auth_token)
 
-# Deployed Flask app endpoint
-BASE_WEBHOOK_URL = "https://threedlogistix-voice-agent.onrender.com"
+# Webhook URL of deployed Flask server
+BASE_WEBHOOK_URL = os.getenv("WEBHOOK_BASE_URL", "https://threedlogistix-voice-agent.onrender.com")
 
 # Google Sheets setup
-creds = Credentials.from_service_account_file("/etc/secrets/google-creds.json")
-gc = gspread.authorize(creds)
-sheet = gc.open("3DLogistiX Calls").sheet1
+creds_path = os.getenv("GOOGLE_CREDS_PATH", "google-creds.json")
+sheet_name = os.getenv("GOOGLE_SHEET_NAME", "3DLogistiX Calls")
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
+try:
+    creds = Credentials.from_service_account_file(creds_path, scopes=scope)
+    gc = gspread.authorize(creds)
+    sheet = gc.open(sheet_name).sheet1
+except Exception as e:
+    print(f"❌ Failed to connect to Google Sheets: {e}")
+    sheet = None
 
 def log_to_sheet(name, phone, pain):
-    """Log call attempt to Google Sheet with timestamp."""
-    sheet.append_row([name, phone, pain, "Call placed", datetime.now().isoformat()])
-
-def build_prompt(name, linkedin, pain):
-    """Builds the AI prompt (currently unused; logic moved to Flask endpoint)."""
-    return (
-        f"You are Alex, a friendly and knowledgeable AI sales assistant from 3DLogistiX, calling {name}, "
-        f"a warehouse manager. You've seen their LinkedIn profile at {linkedin} and know their key pain point is: '{pain}'. "
-        f"Start by addressing their pain point and showing empathy. "
-        f"Then explain how companies like Wilde Brands solved similar challenges using 3DLogistiX. "
-        f"Wilde Brands connects Shopify, Xero, and Starshipit through our platform to automate order flow, stock visibility, "
-        f"and dispatch coordination — saving time and reducing human errors. "
-        f"Wrap up by offering to book a short call or demo, and mention we also have connectors to other systems like NetSuite, DEAR, and Unleashed."
-    )
+    """
+    Logs the outbound call attempt to Google Sheets.
+    """
+    if not sheet:
+        print(f"⚠️ Skipping log to sheet — sheet not initialized.")
+        return
+    timestamp = datetime.now().isoformat()
+    try:
+        sheet.append_row([name, phone, pain, "Call placed", timestamp])
+    except Exception as e:
+        print(f"❌ Failed to log to sheet for {name}: {e}")
 
 def call_contact(contact):
-    """Triggers an outbound call via Twilio and logs it to Google Sheets."""
-    name = contact["name"]
-    phone = contact["phone"]
-    linkedin = contact["linkedin"]
-    pain = contact["pain_point"]
+    """
+    Places a call via Twilio to a contact and logs the attempt.
+    """
+    name = contact.get("name", "").strip()
+    phone = contact.get("phone", "").strip()
+    linkedin = contact.get("linkedin", "").strip()
+    pain = contact.get("pain_point", "").strip()
 
-    params = urlencode({
+    if not all([name, phone, linkedin, pain]):
+        print(f"⚠️ Skipping contact due to missing fields: {contact}")
+        return
+
+    query_params = urlencode({
         "name": name,
         "linkedin": linkedin,
         "pain": pain
@@ -53,19 +68,28 @@ def call_contact(contact):
         call = client.calls.create(
             to=phone,
             from_=twilio_number,
-            url=f"{BASE_WEBHOOK_URL}/voice?{params}"
+            url=f"{BASE_WEBHOOK_URL}/voice?{query_params}"
         )
+        print(f"✅ Call placed to {name} ({phone}) | Call SID: {call.sid}")
         log_to_sheet(name, phone, pain)
-        print(f"✅ Call placed to {name} ({phone}) | SID: {call.sid}")
     except Exception as e:
-        print(f"❌ Failed to call {name} ({phone}): {str(e)}")
+        print(f"❌ Error calling {name} ({phone}): {str(e)}")
 
 def load_contacts_and_call(csv_path="contacts.csv"):
-    """Loads contacts from CSV and places outbound calls."""
-    with open(csv_path, "r") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            call_contact(row)
+    """
+    Reads a CSV of contacts and places outbound calls to each.
+    """
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                call_contact(row)
+    except FileNotFoundError:
+        print(f"❌ CSV file not found at path: {csv_path}")
+    except Exception as e:
+        print(f"❌ Failed to load contacts: {str(e)}")
 
 if __name__ == "__main__":
     load_contacts_and_call()
+
+
